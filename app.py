@@ -2,6 +2,12 @@
 
 # imports and utilities
 import streamlit as st
+# ... all your code goes here ...
+
+# -*- coding: utf-8 -*-
+
+# imports and utilities
+import streamlit as st
 import pandas as pd
 import numpy as np
 from scipy.signal import butter, filtfilt, find_peaks
