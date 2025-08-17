@@ -198,3 +198,4 @@ if uploaded_file is not None:
         process_and_visualize(df)
     except Exception as e:
         st.error(f'An error occurred: {e}')
+
