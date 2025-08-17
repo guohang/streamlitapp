@@ -49,7 +49,7 @@ def zero_crossing(df, column_name):
     df['Pos_to_Neg'] = (df['Value'] < 0) & (df['Shifted'] > 0)
     neg_to_pos_df = df[df['Neg_to_Pos']].copy()
     pos_to_neg_df = df[df['Pos_to_Neg']].copy()
-    result = pd.concat([pos_to_neg_df, neg_to_pos_df])
+    result = pd.concat([neg_to_pos_df, pos_to_neg_df])
     result = result.sort_index()
     result.rename(columns={'Neg_to_Pos': 'corner_entrance'}, inplace=True)
     result.rename(columns={'Pos_to_Neg': 'corner_exit'}, inplace=True)
