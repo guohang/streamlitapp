@@ -2,12 +2,6 @@
 
 # imports and utilities
 import streamlit as st
-# ... all your code goes here ...
-
-# -*- coding: utf-8 -*-
-
-# imports and utilities
-import streamlit as st
 import pandas as pd
 import numpy as np
 from scipy.signal import butter, filtfilt, find_peaks
@@ -102,9 +96,9 @@ def apply_filter_push(data, column_name, sampling_rate):
     return data
 
 def entrance_exit_function(df_source):
-    data = apply_filter_corner(df_source.copy(),'Angle Y(°)',0.5)
-    peaks = corner_detection(df_source,'Angle Y(°)')
-    zero_cross = zero_crossing(data,'Angle Y(°)')
+    data = apply_filter_corner(df_source.copy(),'Angle Y',0.5)
+    peaks = corner_detection(df_source,'Angle Y')
+    zero_cross = zero_crossing(data,'Angle Y')
     entrance_exit = find_entrance_exit(peaks, zero_cross)
     return entrance_exit
 
@@ -122,7 +116,7 @@ def straight_push_index(entrance_exit):
     return pairs
 
 def combined_frontal_acceleration(df):
-    df['combined acceleration'] = (df['Acceleration Z(g)']**2+df['Acceleration Y(g)']**2+df['Acceleration X(g)']**2)**0.5
+    df['combined acceleration'] = (df['Acceleration Z']**2+df['Acceleration Y']**2+df['Acceleration X']**2)**0.5
     return df
 
 def process_and_visualize(global_df):
@@ -201,7 +195,16 @@ if uploaded_file is not None:
     try:
         df = pd.read_csv(io.BytesIO(uploaded_file.getvalue()))
         st.success('File loaded successfully!')
+
+        # Fix 1: Clean and convert columns to numeric types to resolve the 'unsupported operand' error.
+        df.columns = df.columns.str.strip().str.replace(r' \(.*\)', '', regex=True)
+        numeric_columns = ['Acceleration X', 'Acceleration Y', 'Acceleration Z', 'Angle Y']
+        for col in numeric_columns:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        
         process_and_visualize(df)
+    
+    # Fix 2: Correct the indentation of the except block.
     except Exception as e:
         st.error(f'An error occurred: {e}')
-
