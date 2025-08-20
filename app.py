@@ -50,7 +50,7 @@ def zero_crossing(df, column_name):
     df['Pos_to_Neg'] = (df['Value'] < 0) & (df['Shifted'] > 0)
     neg_to_pos_df = df[df['Neg_to_Pos']]
     pos_to_neg_df = df[df['Pos_to_Neg']]
-    result = pd.concat([pos_to_neg_df, neg_to_pos_df])
+    result = pd.concat([pos_to_neg_df, pos_to_neg_df])
     result = result.sort_index()
     result.rename(columns={'Neg_to_Pos': 'corner_entrance'}, inplace=True)
     result.rename(columns={'Pos_to_Neg': 'corner_exit'}, inplace=True)
@@ -124,7 +124,6 @@ def straight_push_index(entrance_exit):
 
 
 def combined_frontal_acceleration(df):
-    # The following line has been updated with the correct column names.
     df['combined acceleration'] = (df['Acceleration Z(g)']**2 + df['Acceleration Y(g)']**2 + df['Acceleration X(g)']**2)**0.5
     return df
 
@@ -164,9 +163,45 @@ if uploaded_file is not None:
         st.write('Data loaded')
 
         st.subheader("Visualizations")
-        # Corrected code to display the plot
+        # Main visualization
         fig = visualization(df)
         st.plotly_chart(fig)
+
+        # Plotting the push detection and bar chart
+        section_df = pd.concat([df], ignore_index=True)
+        data_slices = []
+        for index, row in section_df.iterrows():
+            start_index = row['Start Index'] if 'Start Index' in row else 0
+            end_index = row['End Index'] if 'End Index' in row else len(df)
+            data_slice_df = df.loc[start_index:end_index].copy()
+            data_slice_df['Type'] = 'Overall'
+            data_slices.append(data_slice_df)
+
+        for i, df in enumerate(data_slices, start=1):
+            chart_name_1 = f'Skating Data {i} - {df["Type"].iloc[0]}' + ' : Combined Acceleration with Boundaries Marked by Red-dots'
+            chart_name_2 = f'Skating Data {i} - {df["Type"].iloc[0]}' + ' : Total Acceleration per Push'
+
+            push_data = apply_filter_push(df, 'combined acceleration', 200)
+            push_data['filtered_signal'] = -push_data['filtered_signal']
+            push_peaks = push_detection(push_data, 'filtered_signal', 200)
+
+            if not push_peaks.size == 0:
+                fig = go.Figure()
+                trace = go.Scatter(x=df.index, y=df['combined acceleration'], mode='lines', fill='tozeroy', name='Time Series')
+                marked_trace = go.Scatter(x=df.index[push_peaks], y=df['combined acceleration'].iloc[push_peaks], mode='markers', marker=dict(size=10, color='Red', opacity=0.6), name='Marked Points')
+                fig = go.Figure([trace, marked_trace])
+                fig.update_layout(title=chart_name_1, xaxis_title='Time', yaxis_title='Combined Acceleration')
+                st.plotly_chart(fig)
+
+                result = []
+                for j in range(len(push_peaks) - 1):
+                    start_index = push_peaks[j] + 1
+                    end_index = push_peaks[j+1]
+                    slice_df = df.iloc[start_index:end_index]
+                    result.append(slice_df['combined acceleration'].sum())
+                fig_bar = go.Figure([go.Bar(y=result, width=0.5)])
+                fig_bar.update_layout(title=chart_name_2, yaxis_title='Total Acceleration from One Push', template='plotly_white')
+                st.plotly_chart(fig_bar)
 
     except Exception as e:
         st.error(f"An error occurred: {e}")
