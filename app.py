@@ -164,7 +164,9 @@ if uploaded_file is not None:
         st.write('Data loaded')
 
         st.subheader("Visualizations")
-        visualization(df)
+        # Corrected code to display the plot
+        fig = visualization(df)
+        st.plotly_chart(fig)
 
     except Exception as e:
         st.error(f"An error occurred: {e}")
