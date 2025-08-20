@@ -157,4 +157,87 @@ uploaded_file = st.file_uploader("Upload a CSV or TXT file", type=['csv', 'txt']
 
 if uploaded_file is not None:
     try:
-        df = pd.read_csv(io
+        df = pd.read_csv(io.StringIO(uploaded_file.getvalue().decode('utf-8')))
+        df = df.reset_index()
+        df = combined_frontal_acceleration(df)
+        entrance_exit = entrance_exit_function(df)
+        st.write('Data loaded')
+
+        st.subheader("Visualizations")
+        fig = visualization(df)
+        st.plotly_chart(fig)
+
+        df_zero_crossing = zero_crossing(df.copy(), 'Angular velocity Z(°/s)')
+        closest_pairs_df_corner = pd.DataFrame()
+        closest_pairs_df_straightline = pd.DataFrame()
+
+        exit_indices = df_zero_crossing.index[df_zero_crossing['corner_exit']].tolist()
+        entrance_indices = df_zero_crossing.index[df_zero_crossing['corner_entrance']].tolist()
+        closest_pairs = []
+        for i in range(len(entrance_indices)):
+            entrance_idx = entrance_indices[i]
+            min_diff = np.inf
+            closest_exit_idx = None
+            for exit_idx in exit_indices:
+                if exit_idx > entrance_idx:
+                    diff = exit_idx - entrance_idx
+                    if diff < min_diff and diff <= 2000:
+                        min_diff = diff
+                        closest_exit_idx = exit_idx
+            if closest_exit_idx is not None:
+                closest_pairs.append([entrance_idx, closest_exit_idx, min_diff, 'Corner'])
+        closest_pairs_df_corner = pd.DataFrame(closest_pairs, columns=['Start Index', 'End Index', 'Index Difference', 'Type'])
+
+        closest_pairs = []
+        for i in range(len(exit_indices)):
+            exit_idx = exit_indices[i]
+            min_diff = np.inf
+            closest_entrance_idx = None
+            for entrance_idx in entrance_indices:
+                if entrance_idx > exit_idx:
+                    diff = entrance_idx - exit_idx
+                    if diff < min_diff and diff <= 2000:
+                        min_diff = diff
+                        closest_entrance_idx = entrance_idx
+            if closest_entrance_idx is not None:
+                closest_pairs.append([exit_idx, closest_entrance_idx, min_diff, 'Straightline'])
+        closest_pairs_df_straightline = pd.DataFrame(closest_pairs, columns=['Start Index', 'End Index', 'Index Difference', 'Type'])
+
+        section_df = pd.concat([closest_pairs_df_corner, closest_pairs_df_straightline], ignore_index=True)
+
+        data_slices = []
+        for index, row in section_df.iterrows():
+            start_index = row['Start Index']
+            end_index = row['End Index']
+            data_slice_df = df.loc[start_index:end_index].copy()
+            data_slice_df['Type'] = row['Type']
+            data_slices.append(data_slice_df)
+
+        for i, data_slice in enumerate(data_slices, start=1):
+            chart_name_1 = f'Skating Data {i} - {data_slice["Type"].iloc[0]} : Combined Acceleration with Boundaries Marked by Red-dots'
+            chart_name_2 = f'Skating Data {i} - {data_slice["Type"].iloc[0]} : Total Acceleration per Push'
+
+            push_data = apply_filter_push(data_slice, 'combined acceleration', 200)
+            push_data['filtered_signal'] = -push_data['filtered_signal']
+            push_peaks = push_detection(push_data, 'filtered_signal', 200)
+
+            if not push_peaks.size == 0:
+                fig = go.Figure()
+                trace = go.Scatter(x=data_slice.index, y=data_slice['combined acceleration'], mode='lines', fill='tozeroy', name='Time Series')
+                marked_trace = go.Scatter(x=data_slice.index[push_peaks], y=data_slice['combined acceleration'].iloc[push_peaks], mode='markers', marker=dict(size=10, color='Red', opacity=0.6), name='Marked Points')
+                fig = go.Figure([trace, marked_trace])
+                fig.update_layout(title=chart_name_1, xaxis_title='Time', yaxis_title='Combined Acceleration')
+                st.plotly_chart(fig)
+
+                result = []
+                for j in range(len(push_peaks) - 1):
+                    start_index = push_peaks[j] + 1
+                    end_index = push_peaks[j+1]
+                    slice_df = data_slice.iloc[start_index:end_index]
+                    result.append(slice_df['combined acceleration'].sum())
+                fig_bar = go.Figure([go.Bar(y=result, width=0.5)])
+                fig_bar.update_layout(title=chart_name_2, yaxis_title='Total Acceleration from One Push', template='plotly_white')
+                st.plotly_chart(fig_bar)
+
+    except Exception as e:
+        st.error(f"An error occurred: {e}")
