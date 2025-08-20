@@ -203,5 +203,5 @@ if uploaded_file is not None:
         st.success('File loaded successfully!')
         process_and_visualize(df)
     except Exception as e:
- st.error(f'An error occurred: {e}')
+        st.error(f'An error occurred: {e}')
 
