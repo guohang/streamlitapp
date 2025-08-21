@@ -9,6 +9,7 @@ from scipy.stats import zscore
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import io
+import re
 
 
 def butter_lowpass_filter(data, cutoff, fs, order):
@@ -21,223 +22,181 @@ def butter_lowpass_filter(data, cutoff, fs, order):
     filtered_data = filtfilt(b, a, data)
     return filtered_data
 
-
 def corner_detection(data, column_name):
     zscore_threshold = 1
-    # Corrected code to convert column to numeric
-    data[column_name] = pd.to_numeric(data[column_name], errors='coerce')
     data['z-axis_normalized'] = (data[column_name] - data[column_name].min()) / (data[column_name].max() - data[column_name].min())
     data['z-axis_normalized_rate_of_change'] = data['z-axis_normalized'].diff()
     data['z-axis_normalized_zscore'] = zscore(data['z-axis_normalized'])
+
     positive_potential_peaks_normalized = data[(data['z-axis_normalized_rate_of_change'].abs() > data['z-axis_normalized_rate_of_change'].quantile(0.7)) &
-                                            (data['z-axis_normalized_zscore'] > zscore_threshold) &
-                                            (data['z-axis_normalized'] > 0)]['z-axis_normalized']
-    filtered_peaks_indices_normalized = []
-    last_peak_index = 0
-    min_distance_between_peaks = 700
-    for index in positive_potential_peaks_normalized.index:
-        if index - last_peak_index >= min_distance_between_peaks:
-            filtered_peaks_indices_normalized.append(index)
-            last_peak_index = index
-    refined_peaks_normalized = data.loc[filtered_peaks_indices_normalized, column_name]
-    return refined_peaks_normalized
+                                            (data['z-axis_normalized_zscore'].abs() > zscore_threshold) &
+                                            (data['z-axis_normalized_rate_of_change'] > 0)]
+    positive_potential_peaks_indices_normalized = positive_potential_peaks_normalized.index
 
+    negative_potential_peaks_normalized = data[(data['z-axis_normalized_rate_of_change'].abs() > data['z-axis_normalized_rate_of_change'].quantile(0.7)) &
+                                            (data['z-axis_normalized_zscore'].abs() > zscore_threshold) &
+                                            (data['z-axis_normalized_rate_of_change'] < 0)]
+    negative_potential_peaks_indices_normalized = negative_potential_peaks_normalized.index
 
-def zero_crossing(df, column_name):
-    df['Shifted'] = df[column_name].shift(1)
-    df['Value'] = df[column_name]
-    df['Neg_to_Pos'] = (df['Value'] > 0) & (df['Shifted'] < 0)
-    df['Pos_to_Neg'] = (df['Value'] < 0) & (df['Shifted'] > 0)
-    neg_to_pos_df = df[df['Neg_to_Pos']]
-    pos_to_neg_df = df[df['Pos_to_Neg']]
-    # Corrected concatenation to use both dataframes
-    result = pd.concat([pos_to_neg_df, neg_to_pos_df])
-    result = result.sort_index()
-    result.rename(columns={'Neg_to_Pos': 'corner_entrance'}, inplace=True)
-    result.rename(columns={'Pos_to_Neg': 'corner_exit'}, inplace=True)
-    return result
+    return (positive_potential_peaks_indices_normalized, negative_potential_peaks_indices_normalized)
 
+def combined_acceleration_and_time(df):
+    
+    if 'Acceleration X(g)' in df.columns and 'Acceleration Y(g)' in df.columns and 'Acceleration Z(g)' in df.columns:
+        df['combined acceleration'] = np.sqrt(df['Acceleration X(g)']**2 + df['Acceleration Y(g)']**2 + df['Acceleration Z(g)']**2)
+        st.write("Successfully calculated combined acceleration.")
 
-def find_entrance_exit(peaks, entrance_exit):
-    df = entrance_exit
-    start_idx = min(peaks.index)
-    end_idx = max(peaks.index)
-    selected_df = df.loc[start_idx:end_idx]
-    all_indices = df.index.tolist()
-    selected_indices = selected_df.index.tolist()
-    before_after_indices = []
-    for idx in selected_indices:
-        idx_pos = all_indices.index(idx)
-        if idx_pos > 0:
-            before_after_indices.append(all_indices[idx_pos - 1])
-        before_after_indices.append(idx)
-        if idx_pos < len(all_indices) - 1:
-            before_after_indices.append(all_indices[idx_pos + 1])
-    final_indices = sorted(set(before_after_indices))
-    final_selection = df.loc[final_indices]
-    return final_selection
-
-
-def apply_filter_corner(data, column_name, cutoff):
-    cutoff = cutoff
-    fs = 200
-    order = 1
-    filtered_signal = butter_lowpass_filter(data[column_name], cutoff, fs, order)
-    result = data.copy()
-    result[column_name] = filtered_signal
-    return result
-
-
-def push_detection(data, column_name, sampling_rate):
-    peaks, _ = find_peaks(data[column_name], prominence=0.5, distance=sampling_rate / 4)
-    return peaks
-
-
-def apply_filter_push(data, column_name, sampling_rate):
-    cutoff = 5
-    fs = sampling_rate
-    order = 5
-    filtered_signal = butter_lowpass_filter(data[column_name], cutoff, fs, order)
-    data['filtered_signal'] = filtered_signal
-    return data
-
-
-def entrance_exit_function(df_source):
-    data = apply_filter_corner(df_source.copy(), 'Angle Y(°)', 0.5)
-    peaks = corner_detection(df_source, 'Angle Y(°)')
-    zero_cross = zero_crossing(data, 'Angle Y(°)')
-    entrance_exit = find_entrance_exit(peaks, zero_cross)
-    return entrance_exit
-
-
-def straight_push_index(entrance_exit):
-    df = entrance_exit
-    exit_indices = df.index[df['corner_exit']].tolist()
-    entrance_indices = df.index[df['corner_entrance']].tolist()
-    pairs = []
-    for i in range(len(exit_indices) - 1):
-        current_exit_idx = exit_indices[i]
-        for j in range(len(entrance_indices)):
-            if entrance_indices[j] > current_exit_idx:
-                pairs.append((current_exit_idx, entrance_indices[j]))
-                break
-    return pairs
-
-
-def combined_frontal_acceleration(df):
-    df['combined acceleration'] = (df['Acceleration Z(g)']**2 + df['Acceleration Y(g)']**2 + df['Acceleration X(g)']**2)**0.5
+    else:
+        st.error("Required columns ('Acceleration X(g)', 'Acceleration Y(g)', 'Acceleration Z(g)') not found.")
+        st.stop()
+        
+    if 'Time' in df.columns:
+        # Convert 'Time' column to datetime objects.
+        # errors='coerce' will turn unparsable values into NaT (Not a Time).
+        df['Time'] = pd.to_datetime(df['Time'], errors='coerce')
+        
+        # Check if the first value is a valid timestamp before calculating the time difference.
+        if pd.notna(df['Time'][0]):
+            # Calculate time difference from the start of the data
+            # This will result in a Timedelta object.
+            df['Time'] = (df['Time'] - df['Time'][0]).dt.total_seconds()
+        else:
+            st.error("The first timestamp in the 'Time' column is not a valid format.")
+            st.stop()
+    else:
+        st.error("The 'Time' column is not found in the uploaded data.")
+        st.stop()
+    
     return df
 
+def peak_and_chart(df, find_peaks_parameter, chart_name_1, chart_name_2):
+    
+    peaks, _ = find_peaks(df['combined acceleration'], **find_peaks_parameter)
 
-def visualization(df):
-    fig = make_subplots(rows=7, cols=1, shared_xaxes=True)
-    fig.add_trace(go.Scatter(x=df.index, y=df['Acceleration Z(g)'], name='z-axis (g)'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['Acceleration X(g)'], name='x-axis (g)', marker_color='orange'), row=2, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=-df['Acceleration Y(g)'], name='-y-axis (g)', marker_color='green'), row=3, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['Angular velocity Z(°/s)'], name='z-axis (Deg/s)', marker_color='red'), row=4, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['Angle X(°)'], name='Angle X(°)', marker_color='cyan'), row=5, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['Angle Y(°)'], name='Angle Y(°)', marker_color='yellow'), row=6, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['combined acceleration'], name='combined acceleration', marker_color='black'), row=7, col=1)
-    fig.update_layout(height=900, width=700, showlegend=False)
-    fig.update_xaxes(title_text="センサーデータの可視化", row=3, col=1)
-    fig.update_yaxes(title_text="z-axis (g)", row=1, col=1)
-    fig.update_yaxes(title_text="x-axis (g)", row=2, col=1)
-    fig.update_yaxes(title_text="-y-axis (g)", row=3, col=1)
-    fig.update_yaxes(title_text="z-axis (Deg/s)", row=4, col=1)
-    fig.update_yaxes(title_text="Angle X(°)", row=5, col=1)
-    fig.update_yaxes(title_text="Angle Y(°)", row=6, col=1)
-    fig.update_yaxes(title_text="combined acceleration", row=7, col=1)
-    fig.update_layout(width=1500, height=1000)
-    return fig
+    st.write("Number of detected events: " + str(len(peaks)))
+
+    # Visualization
+    fig = go.Figure()
+    trace = go.Scatter(x=df['Time'], y=df['combined acceleration'], mode='lines', fill='tozeroy', name='Time Series')
+    
+    # Check if peaks were found
+    if len(peaks) > 0:
+        marked_trace = go.Scatter(x=df['Time'].iloc[peaks], y=df['combined acceleration'].iloc[peaks],
+                                mode='markers', marker=dict(size=10, color='Red', opacity=0.8), name='Marked Points')
+        fig = go.Figure([trace, marked_trace])
+    else:
+        fig = go.Figure([trace])
+
+    fig.update_layout(title=chart_name_1, xaxis_title='Time', yaxis_title='Combined Acceleration')
+    st.plotly_chart(fig)
+
+    result = []
+    if len(peaks) > 1:
+        for j in range(len(peaks) - 1):
+            start_index = peaks[j] + 1
+            end_index = peaks[j + 1]
+            slice_df = df.iloc[start_index:end_index]
+            result.append(slice_df['combined acceleration'].sum())
+        
+        if result:
+            fig_bar = go.Figure([go.Bar(y=result, width=0.5)])
+            fig_bar.update_layout(title=chart_name_2, yaxis_title='Total Acceleration from One Push', template='plotly_white')
+            st.plotly_chart(fig_bar)
+        else:
+            st.write("Not enough peaks to generate a bar chart for total acceleration.")
+
+def detect_push_peaks(df, find_peaks_parameter, chart_name_1, chart_name_2):
+    
+    if 'combined acceleration' not in df.columns:
+        st.error("Please ensure combined acceleration is calculated before detecting peaks.")
+        return
+
+    push_peaks, _ = find_peaks(df['combined acceleration'], **find_peaks_parameter)
+    st.write("Number of detected events (Push): " + str(len(push_peaks)))
+
+    if len(push_peaks) > 0:
+        fig = go.Figure()
+        trace = go.Scatter(x=df['Time'], y=df['combined acceleration'], mode='lines', fill='tozeroy',name='Time Series')
+        marked_trace = go.Scatter(x=df['Time'].iloc[push_peaks], y=df['combined acceleration'].iloc[push_peaks],
+                                mode='markers', marker=dict(size=10, color='Red', opacity=0.8), name='Marked Points')
+        fig = go.Figure([trace, marked_trace])
+        fig.update_layout(title= chart_name_1, xaxis_title='Time', yaxis_title='Combined Acceleration')
+        st.plotly_chart(fig)
+
+        result = []
+        if len(push_peaks) > 1:
+            for j in range(len(push_peaks) - 1):
+                start_index = push_peaks[j] + 1
+                end_index = push_peaks[j + 1]
+                slice_df = df.iloc[start_index:end_index]
+                result.append(slice_df['combined acceleration'].sum())
+            
+            if result:
+                fig_bar = go.Figure([go.Bar(y=result, width=0.5)])
+                fig_bar.update_layout(title= chart_name_2, yaxis_title='Total Acceleration from One Push', template='plotly_white')
+                st.plotly_chart(fig_bar)
+            else:
+                st.write("Not enough push peaks to generate a bar chart.")
+    else:
+        st.write("No peaks detected. Cannot generate chart.")
 
 
 st.title('Body-Mounted Accelerometer Data Visualizer')
 uploaded_file = st.file_uploader("Upload a CSV or TXT file", type=['csv', 'txt'])
 
-
 if uploaded_file is not None:
     try:
-        df = pd.read_csv(io.StringIO(uploaded_file.getvalue().decode('utf-8')))
-        df = df.reset_index()
-        df = combined_frontal_acceleration(df)
-        entrance_exit = entrance_exit_function(df)
-        st.write('Data loaded')
+        df = pd.read_csv(uploaded_file, skipinitialspace=True)
+        st.write("### Raw Data")
+        st.dataframe(df)
 
-        st.subheader("Visualizations")
-        fig = visualization(df)
-        st.plotly_chart(fig)
+        df = combined_acceleration_and_time(df)
+        
+        st.write("### Filtered and Preprocessed Data")
+        st.dataframe(df)
+        
+        # Streamlit sidebar for filter controls
+        st.sidebar.header('Filter Controls')
+        selected_option = st.sidebar.selectbox('Select Data Type:', ['Combined Acceleration', 'Z-Axis Data'])
+        
+        if selected_option == 'Combined Acceleration':
+            st.write("### Combined Acceleration Analysis")
+            
+            # Use `st.columns` for side-by-side layout
+            col1, col2 = st.columns(2)
+            with col1:
+                height = st.number_input('Height (m):', value=0.1, step=0.01)
+            with col2:
+                distance = st.number_input('Distance (m):', value=0.1, step=0.01)
+            
+            find_peaks_parameter = {
+                'height': height,
+                'distance': int(distance)
+            }
+            
+            peak_and_chart(df, find_peaks_parameter, 'Combined Acceleration Peaks Over Time', 'Total Acceleration for Each Peak')
 
-        df_zero_crossing = zero_crossing(df.copy(), 'Angular velocity Z(°/s)')
-        closest_pairs_df_corner = pd.DataFrame()
-        closest_pairs_df_straightline = pd.DataFrame()
+        elif selected_option == 'Z-Axis Data':
+            st.write("### Z-Axis Corner Detection Analysis")
+            
+            if 'Acceleration Z(g)' in df.columns:
+                
+                # Use `st.columns` for side-by-side layout
+                col1, col2 = st.columns(2)
+                with col1:
+                    height = st.number_input('Height (m):', value=0.1, step=0.01, key='z_height')
+                with col2:
+                    distance = st.number_input('Distance (m):', value=0.1, step=0.01, key='z_distance')
+                
+                find_peaks_parameter = {
+                    'height': height,
+                    'distance': int(distance)
+                }
 
-        exit_indices = df_zero_crossing.index[df_zero_crossing['corner_exit']].tolist()
-        entrance_indices = df_zero_crossing.index[df_zero_crossing['corner_entrance']].tolist()
-        closest_pairs = []
-        for i in range(len(entrance_indices)):
-            entrance_idx = entrance_indices[i]
-            min_diff = np.inf
-            closest_exit_idx = None
-            for exit_idx in exit_indices:
-                if exit_idx > entrance_idx:
-                    diff = exit_idx - entrance_idx
-                    if diff < min_diff and diff <= 2000:
-                        min_diff = diff
-                        closest_exit_idx = exit_idx
-            if closest_exit_idx is not None:
-                closest_pairs.append([entrance_idx, closest_exit_idx, min_diff, 'Corner'])
-        closest_pairs_df_corner = pd.DataFrame(closest_pairs, columns=['Start Index', 'End Index', 'Index Difference', 'Type'])
-
-        closest_pairs = []
-        for i in range(len(exit_indices)):
-            exit_idx = exit_indices[i]
-            min_diff = np.inf
-            closest_entrance_idx = None
-            for entrance_idx in entrance_indices:
-                if entrance_idx > exit_idx:
-                    diff = entrance_idx - exit_idx
-                    if diff < min_diff and diff <= 2000:
-                        min_diff = diff
-                        closest_entrance_idx = entrance_idx
-            if closest_entrance_idx is not None:
-                closest_pairs.append([exit_idx, closest_entrance_idx, min_diff, 'Straightline'])
-        closest_pairs_df_straightline = pd.DataFrame(closest_pairs, columns=['Start Index', 'End Index', 'Index Difference', 'Type'])
-
-        section_df = pd.concat([closest_pairs_df_corner, closest_pairs_df_straightline], ignore_index=True)
-
-        data_slices = []
-        for index, row in section_df.iterrows():
-            start_index = row['Start Index']
-            end_index = row['End Index']
-            data_slice_df = df.loc[start_index:end_index].copy()
-            data_slice_df['Type'] = row['Type']
-            data_slices.append(data_slice_df)
-
-        for i, data_slice in enumerate(data_slices, start=1):
-            chart_name_1 = f'Skating Data {i} - {data_slice["Type"].iloc[0]} : Combined Acceleration with Boundaries Marked by Red-dots'
-            chart_name_2 = f'Skating Data {i} - {data_slice["Type"].iloc[0]} : Total Acceleration per Push'
-
-            push_data = apply_filter_push(data_slice, 'combined acceleration', 200)
-            push_data['filtered_signal'] = -push_data['filtered_signal']
-            push_peaks = push_detection(push_data, 'filtered_signal', 200)
-
-            if not push_peaks.size == 0:
-                fig = go.Figure()
-                trace = go.Scatter(x=data_slice.index, y=data_slice['combined acceleration'], mode='lines', fill='tozeroy', name='Time Series')
-                marked_trace = go.Scatter(x=data_slice.index[push_peaks], y=data_slice['combined acceleration'].iloc[push_peaks], mode='markers', marker=dict(size=10, color='Red', opacity=0.6), name='Marked Points')
-                fig = go.Figure([trace, marked_trace])
-                fig.update_layout(title=chart_name_1, xaxis_title='Time', yaxis_title='Combined Acceleration')
-                st.plotly_chart(fig)
-
-                result = []
-                for j in range(len(push_peaks) - 1):
-                    start_index = push_peaks[j] + 1
-                    end_index = push_peaks[j+1]
-                    slice_df = data_slice.iloc[start_index:end_index]
-                    result.append(slice_df['combined acceleration'].sum())
-                fig_bar = go.Figure([go.Bar(y=result, width=0.5)])
-                fig_bar.update_layout(title=chart_name_2, yaxis_title='Total Acceleration from One Push', template='plotly_white')
-                st.plotly_chart(fig_bar)
+                # Assuming 'Acceleration Z(g)' is the correct column name based on the CSV
+                detect_push_peaks(df, find_peaks_parameter, 'Push Peaks Over Time', 'Total Acceleration from One Push')
+            else:
+                st.error("The 'Acceleration Z(g)' column is not found in the uploaded data.")
 
     except Exception as e:
         st.error(f"An error occurred: {e}")
