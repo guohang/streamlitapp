@@ -147,6 +147,8 @@ uploaded_file = st.file_uploader("Upload a CSV or TXT file", type=['csv', 'txt']
 if uploaded_file is not None:
     try:
         df = pd.read_csv(uploaded_file, skipinitialspace=True)
+        # Clean column names by stripping leading/trailing whitespace
+        df.columns = df.columns.str.strip()
         st.write("### Raw Data")
         st.dataframe(df)
 
